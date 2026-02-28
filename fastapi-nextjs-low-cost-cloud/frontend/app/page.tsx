@@ -13,8 +13,7 @@ export default function Home() {
     setLoading(true);
     
     try {
-      // For now, this will fail - we'll fix it when backend is ready
-      const result = await axios.post('http://localhost:8000/api/chat', { query });
+      const result = await axios.post('/api/chat', { query });
       setResponse(JSON.stringify(result.data, null, 2));
     } catch (error) {
       setResponse('Error: ' + (error as Error).message);
