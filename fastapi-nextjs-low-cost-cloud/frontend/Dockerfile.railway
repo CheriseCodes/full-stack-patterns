@@ -1,0 +1,12 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY fastapi-nextjs-low-cost-cloud/frontend/package*.json ./
+RUN npm install
+
+COPY fastapi-nextjs-low-cost-cloud/frontend/ .
+RUN npm run build
+
+EXPOSE 3000
+CMD ["npm", "start"]
