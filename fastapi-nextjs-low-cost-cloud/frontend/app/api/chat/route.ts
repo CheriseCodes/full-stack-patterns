@@ -28,6 +28,11 @@ export async function POST(req: NextRequest) {
         });
       },
     },
+    cookieOptions: {
+      name: 'sb-auth-token',
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    },
   });
 
   const {

@@ -14,7 +14,13 @@ export function getSupabaseBrowserClient(): SupabaseClient {
       );
     }
 
-    client = createBrowserClient(supabaseUrl, supabaseAnonKey);
+    client = createBrowserClient(supabaseUrl, supabaseAnonKey, {
+      cookieOptions: {
+        name: 'sb-auth-token',
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+      },
+    });
   }
 
   return client;
