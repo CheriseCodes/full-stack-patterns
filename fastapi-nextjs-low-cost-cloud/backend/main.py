@@ -5,7 +5,6 @@ import os
 from dotenv import load_dotenv
 import requests
 from supabase import create_client, Client
-import uuid
 
 
 load_dotenv()
@@ -14,6 +13,23 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_KEY")
 )
+
+
+def verify_supabase_jwt(token: str) -> dict:
+  """
+  Verify the Supabase JWT using either the project's JWT secret (HS256)
+  or the project's JWKS endpoint (RS256), depending on the token header.
+  Validates signature, audience, issuer, and standard time claims.
+  """
+  try:
+     decoded = supabase.auth.get_claims(token)['claims']
+  except Exception as e:
+      raise HTTPException(
+          status_code=status.HTTP_401_UNAUTHORIZED,
+          detail=f"Invalid Supabase access token: {str(e)}",
+      )
+
+  return decoded
 
 app = FastAPI()
 
@@ -56,9 +72,18 @@ def chat(request: QueryRequest, authorization: str = Header(None)):
 
     access_token = authorization.replace("Bearer ", "").strip()
 
+    # First, cryptographically verify the JWT (signature, issuer, audience, exp/nbf)
+    decoded = verify_supabase_jwt(access_token)
+    user_id = str(decoded.get("sub") or decoded.get("user_metadata")['id'])
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Supabase token does not contain a user identifier",
+        )
+
     query = request.query
 
-    # Create a Supabase client scoped to this user's session
+    # Create a Supabase client scoped to this user's session so RLS/auth.uid() work
     user_supabase = create_client(
         os.getenv("SUPABASE_URL"),
         os.getenv("SUPABASE_KEY")
@@ -66,20 +91,11 @@ def chat(request: QueryRequest, authorization: str = Header(None)):
 
     try:
         user_supabase.auth.set_session(access_token, "")
-        user_response = user_supabase.auth.get_user()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Failed to validate Supabase session: {str(e)}",
+            detail=f"Failed to set Supabase session: {str(e)}",
         )
-
-    if not user_response or not getattr(user_response, "user", None):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Supabase user session",
-        )
-
-    user_id = str(user_response.user.id)
 
     # Create conversation for the authenticated user
     conversation = user_supabase.table("conversations").insert({
