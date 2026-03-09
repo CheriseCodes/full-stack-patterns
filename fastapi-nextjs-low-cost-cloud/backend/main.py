@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header
+from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -47,15 +47,43 @@ def chat(request: QueryRequest, authorization: str = Header(None)):
     No processing, no AI, just prove it works
     """
     
+    # Basic auth guard – require a Bearer token from Supabase
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header",
+        )
+
+    access_token = authorization.replace("Bearer ", "").strip()
+
     query = request.query
+
+    # Create a Supabase client scoped to this user's session
     user_supabase = create_client(
         os.getenv("SUPABASE_URL"),
         os.getenv("SUPABASE_KEY")
     )
-    user_supabase.auth.set_session(authorization.replace("Bearer ", ""), "")
-    # Create conversation (dummy user_id for now)
+
+    try:
+        user_supabase.auth.set_session(access_token, "")
+        user_response = user_supabase.auth.get_user()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Failed to validate Supabase session: {str(e)}",
+        )
+
+    if not user_response or not getattr(user_response, "user", None):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Supabase user session",
+        )
+
+    user_id = str(user_response.user.id)
+
+    # Create conversation for the authenticated user
     conversation = user_supabase.table("conversations").insert({
-        "user_id": "test-user",
+        "user_id": user_id,
         "title": query[:50]  # First 50 chars
     }).execute()
     
@@ -86,18 +114,18 @@ def chat(request: QueryRequest, authorization: str = Header(None)):
             },
             timeout=10
         )
-        
         data = response.json()
 
-        response_content = f"Found: {first_result.get('name')}"
-        user_supabase.table("messages").insert({
-            "conversation_id": conversation_id,
-            "role": "assistant",
-            "content": response_content
-        }).execute()
-        # Return minimal processed data
-        if data.get("results"):
-            first_result = data["results"][0]
+        results = data.get("results") or []
+        if results:
+            first_result = results[0]
+            response_content = f"Found: {first_result.get('name')}"
+            user_supabase.table("messages").insert({
+                "conversation_id": conversation_id,
+                "role": "assistant",
+                "content": response_content
+            }).execute()
+
             return {
                 "success": True,
                 "query": query,
@@ -110,14 +138,26 @@ def chat(request: QueryRequest, authorization: str = Header(None)):
                 "message": "✓ TMDB API connected successfully and saved to database"
             }
         else:
+            user_supabase.table("messages").insert({
+                "conversation_id": conversation_id,
+                "role": "assistant",
+                "content": "No results found"
+            }).execute()
+
             return {
                 "success": True,
                 "query": query,
                 "found": False,
                 "message": "No results found"
             }
-            
+
     except Exception as e:
+        user_supabase.table("messages").insert({
+            "conversation_id": conversation_id,
+            "role": "assistant",
+            "content": f"Error calling TMDB: {str(e)}"
+        }).execute()
+
         return {
             "error": str(e),
             "query": query,
